@@ -10,6 +10,8 @@ from pptx.util import Inches
 
 import requests
 import pdfplumber
+from markitdown import MarkItDown
+
 import re
 from langchain.schema import HumanMessage
 
@@ -28,15 +30,11 @@ openai_api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
 
 # User input for presentation focus
 presentation_focus = st.selectbox(
-    "Select the target audience or purpose of the presentation:",
-    list(prompts.keys())
+    "Select the target audience or purpose of the presentation:", list(prompts.keys())
 )
 
 # Options for input type
-input_type = st.radio(
-    "Select Input Type:",
-    ["Upload PDF", "Enter DOI/URL"]
-)
+input_type = st.radio("Select Input Type:", ["Upload PDF", "Enter DOI/URL"])
 
 uploaded_file = None
 doi_or_url = None
@@ -46,6 +44,7 @@ if input_type == "Upload PDF":
     uploaded_file = st.file_uploader("📄 Upload a PDF document", type=["pdf"])
 elif input_type == "Enter DOI/URL":
     doi_or_url = st.text_input("🔗 Enter DOI or URL:")
+
 
 # Function to download PDF from URL
 def download_pdf_from_url(url):
@@ -59,42 +58,54 @@ def download_pdf_from_url(url):
         st.error("Failed to download PDF. Check the URL.")
         return None
 
+
 # Function to extract text from PDF using pdfplumber
-def extract_text_with_pdfplumber(file_path):
-    with pdfplumber.open(file_path) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text()
+def extract_text_from_pdf(file_path, extractor):
+    if extractor == "markitdown":
+        md = MarkItDown()
+        result = md.convert(file_path)
+        text = result.text_content
+    else:  # pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text()
     return text
+
 
 # Function to dynamically extract keywords using LLM
 def extract_keywords_with_llm(text, openai_api_key):
-    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.2, model_name='gpt-4o')
+    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.2, model_name="gpt-4o")
     prompt = f"Extract the key ecological terms and concepts from the following text:\n{text[:1000]}...\nList them as concise keywords without numbering only commas."
     messages = [HumanMessage(content=prompt)]
     response = llm(messages)
     keywords = [kw.strip() for kw in response.content.split(",")]
     return keywords
 
+
 # Preprocessing for ecological context
 def preprocess_text_for_ecology(text):
     # Remove unwanted elements like headers/footers and references
     cleaned_text = re.sub(r"\nReferences.*", "", text, flags=re.IGNORECASE)
     cleaned_text = re.sub(r"\nPage \d+", "", cleaned_text)
-    
+
     # Detect ecological keywords
     detected_keywords = extract_keywords_with_llm(cleaned_text, openai_api_key)
-    
+
     st.sidebar.write("🔍 Detected Keywords:", detected_keywords)
     return cleaned_text
 
+
 # Function to generate slide content dynamically
 def generate_slide_content(preprocessed_text, presentation_focus, openai_api_key):
-    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.7, model_name='gpt-4')
-    prompt = prompts[presentation_focus] + "\n\n" + preprocessed_text[:2000]  # Limiting to the first 2000 characters
+    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.7, model_name="gpt-4")
+    prompt = (
+        prompts[presentation_focus] + "\n\n" + preprocessed_text[:2000]
+    )  # Limiting to the first 2000 characters
     messages = [HumanMessage(content=prompt)]
     response = llm(messages)
     return response.content
+
 
 # Function to generate and save presentation
 def generate_presentation(slide_structure, slide_content):
@@ -102,7 +113,7 @@ def generate_presentation(slide_structure, slide_content):
     slide_layout = prs.slide_layouts[1]  # Title and Content layout
 
     # Parse content into sections based on the predefined slide structure
-    content_sections = slide_content.split('\n')  # Split by single newlines for better flexibility
+    content_sections = slide_content.split("\n")  # Split by single newlines for better flexibility
 
     # Assign content to slides based on slide structure
     for i, title in enumerate(slide_structure):
@@ -128,8 +139,7 @@ def generate_presentation(slide_structure, slide_content):
     return "generated_presentation.pptx"
 
 
-
-
+pdf_extractors = st.sidebar.selectbox("Select the pdf Exractor", ["markitdown", "pdfplumber"])
 
 # Main logic
 if (uploaded_file or doi_or_url) and openai_api_key:
@@ -142,11 +152,13 @@ if (uploaded_file or doi_or_url) and openai_api_key:
             file_path = download_pdf_from_url(doi_or_url)
 
         if file_path:
-            extracted_text = extract_text_with_pdfplumber(file_path)
+            extracted_text = extract_text_from_pdf(file_path, pdf_extractors)
             preprocessed_text = preprocess_text_for_ecology(extracted_text)
 
             # Generate slide content dynamically
-            slide_content = generate_slide_content(preprocessed_text, presentation_focus, openai_api_key)
+            slide_content = generate_slide_content(
+                preprocessed_text, presentation_focus, openai_api_key
+            )
 
             # Generate and save presentation
             pptx_file = generate_presentation(slide_structures[presentation_focus], slide_content)
@@ -162,7 +174,7 @@ if (uploaded_file or doi_or_url) and openai_api_key:
 
             # Optional: Display slide content in preview
             st.write("### Presentation Preview")
-            content_sections = slide_content.split('\n')
+            content_sections = slide_content.split("\n")
             for title, content in zip(slide_structures[presentation_focus], content_sections):
                 st.markdown(f"#### {title}")
                 st.text(content.strip())
