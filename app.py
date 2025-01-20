@@ -19,7 +19,8 @@ st.markdown(
 )
 
 # Input for OpenAI API key
-openai_api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
+# openai_api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
+openai_api_key = "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"
 
 # Options for input type
 input_type = st.radio(
