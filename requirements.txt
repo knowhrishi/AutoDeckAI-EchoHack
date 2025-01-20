@@ -1,6 +1,6 @@
 langchain
 markitdown
 pdfplumber
-pptx
+python-pptx
 requests
 streamlit
