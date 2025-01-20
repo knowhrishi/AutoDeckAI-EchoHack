@@ -6,10 +6,15 @@ from langchain.chains import RetrievalQA
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from pptx import Presentation
+from pptx.util import Inches
+
 import requests
 import pdfplumber
 import re
 from langchain.schema import HumanMessage
+
+from utils import prompts, slide_structures
+
 # Set the title of the app
 st.title("🌿 Eco-centric Slide Generator")
 st.markdown(
@@ -19,8 +24,13 @@ st.markdown(
 )
 
 # Input for OpenAI API key
-# openai_api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
-openai_api_key = "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"
+openai_api_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
+
+# User input for presentation focus
+presentation_focus = st.selectbox(
+    "Select the target audience or purpose of the presentation:",
+    list(prompts.keys())
+)
 
 # Options for input type
 input_type = st.radio(
@@ -74,79 +84,89 @@ def preprocess_text_for_ecology(text):
     
     # Detect ecological keywords
     detected_keywords = extract_keywords_with_llm(cleaned_text, openai_api_key)
-    # detected_keywords = [kw for kw in keywords if kw in cleaned_text.lower()]
     
     st.sidebar.write("🔍 Detected Keywords:", detected_keywords)
     return cleaned_text
 
+# Function to generate slide content dynamically
+def generate_slide_content(preprocessed_text, presentation_focus, openai_api_key):
+    llm = ChatOpenAI(openai_api_key=openai_api_key, temperature=0.7, model_name='gpt-4')
+    prompt = prompts[presentation_focus] + "\n\n" + preprocessed_text[:2000]  # Limiting to the first 2000 characters
+    messages = [HumanMessage(content=prompt)]
+    response = llm(messages)
+    return response.content
+
+# Function to generate and save presentation
+def generate_presentation(slide_structure, slide_content):
+    prs = Presentation()
+    slide_layout = prs.slide_layouts[1]  # Title and Content layout
+
+    # Parse content into sections based on the predefined slide structure
+    content_sections = slide_content.split('\n')  # Split by single newlines for better flexibility
+
+    # Assign content to slides based on slide structure
+    for i, title in enumerate(slide_structure):
+        slide = prs.slides.add_slide(slide_layout)
+        slide.shapes.title.text = title.strip()
+
+        # Use content if available, otherwise assign default message
+        if i < len(content_sections) and content_sections[i].strip():
+            content = content_sections[i].strip()
+        else:
+            content = "Content not available or insufficient data."
+
+        # Add content to the slide
+        try:
+            slide.placeholders[1].text = content
+        except IndexError:
+            # If no content placeholder exists, add a textbox
+            textbox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(5))
+            textbox.text = content
+
+    # Save the presentation
+    prs.save("generated_presentation.pptx")
+    return "generated_presentation.pptx"
+
+
+
+
+
 # Main logic
 if (uploaded_file or doi_or_url) and openai_api_key:
     with st.spinner("Processing the document..."):
-        # Handle file input
         if uploaded_file:
             file_path = "uploaded_document.pdf"
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.read())
         elif doi_or_url:
             file_path = download_pdf_from_url(doi_or_url)
-        
+
         if file_path:
-            # Extract text
             extracted_text = extract_text_with_pdfplumber(file_path)
             preprocessed_text = preprocess_text_for_ecology(extracted_text)
 
-            # Split text into chunks
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            documents = text_splitter.split_text(preprocessed_text)
-
-            # Generate embeddings and vector store
-            embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-            vector_store = FAISS.from_texts(documents, embeddings)
-            retriever = vector_store.as_retriever()
-
-            # Create RetrievalQA chain
-            llm = ChatOpenAI(temperature=0.7, openai_api_key=openai_api_key, model_name='gpt-4')
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=llm,
-                chain_type="stuff",
-                retriever=retriever
-            )
-
-            # Query AI for slide content
-            query = "Summarize the ecological significance, methods, and results for a presentation."
-            summary = qa_chain.run(query)
-            sentences = summary.split('.')
-
-            # Prepare slide content
-            slide_content = [
-                ("Title Slide", "Generated presentation based on ecological research"),
-                ("Ecological Background", f"Summary of the background: {sentences[0]}" if len(sentences) > 0 else "No background information available."),
-                ("Methods", f"Methods discussed in the paper: {sentences[1]}" if len(sentences) > 1 else "No methods information available."),
-                ("Results", f"Key results: {sentences[2]}" if len(sentences) > 2 else "No results information available."),
-                ("Conclusion", f"Takeaways and significance: {sentences[3]}" if len(sentences) > 3 else "No conclusion available."),
-            ]
+            # Generate slide content dynamically
+            slide_content = generate_slide_content(preprocessed_text, presentation_focus, openai_api_key)
 
             # Generate and save presentation
-            def generate_presentation(slide_content):
-                prs = Presentation()
-                slide_layout = prs.slide_layouts[1]  # Title and Content layout
-                for title, content in slide_content:
-                    slide = prs.slides.add_slide(slide_layout)
-                    slide.shapes.title.text = title
-                    slide.placeholders[1].text = content
-                prs.save("generated_presentation.pptx")
-                return "generated_presentation.pptx"
-
-            pptx_file = generate_presentation(slide_content)
+            pptx_file = generate_presentation(slide_structures[presentation_focus], slide_content)
 
             # Provide download link
             st.success("🎉 Slides generated successfully!")
             st.download_button(
                 label="📥 Download Presentation",
-                data=open(pptx_file, "rb"),
+                data=open(pptx_file, "rb").read(),
                 file_name="EcoHack_Presentation.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
+
+            # Optional: Display slide content in preview
+            st.write("### Presentation Preview")
+            content_sections = slide_content.split('\n')
+            for title, content in zip(slide_structures[presentation_focus], content_sections):
+                st.markdown(f"#### {title}")
+                st.text(content.strip())
+
 else:
     if not openai_api_key:
         st.warning("Please enter your OpenAI API key.")
