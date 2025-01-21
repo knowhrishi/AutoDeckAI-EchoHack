@@ -5,6 +5,7 @@ import os
 import re
 import requests
 import streamlit as st
+import chromadb
 
 from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -20,6 +21,139 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
+from unstructured.partition.pdf import partition_pdf
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+import base64
+
+from chromadb.config import Settings
+from langchain_core.documents import Document
+
+from PyPDF2 import PdfReader
+
+
+def extract_and_caption_pdf_elements(
+    pdf_file_path: str,
+    openai_api_key: str,
+    output_dir: str = "./content/"
+) -> list:
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    all_results = []
+    
+    def is_likely_table(text: str) -> bool:
+        """Enhanced table detection logic"""
+        indicators = [
+            #WORKAROUND TO FETCH TABLES
+            # Basic table indicators
+            text.count("|") > 2,
+            text.count("\t") > 2,
+            text.count("  ") > 8,
+            
+            # Common table headers
+            bool(re.search(r"Table \d+[:.]\s", text, re.IGNORECASE)),
+            
+            # Number patterns (multiple numbers in sequence often indicate tables)
+            len(re.findall(r"\d+\s+\d+\s+\d+", text)) > 0,
+            
+            # Column-like structure
+            bool(re.search(r"(\w+\s+){3,}\n(\w+\s+){3,}", text)),
+            
+            # Common table words
+            any(word in text.lower() for word in ["total", "sum", "average", "mean", "std", "min", "max"]),
+            
+            # Multiple percentage signs often indicate tables
+            text.count("%") > 2,
+            
+            # Multiple decimal numbers often indicate tables
+            len(re.findall(r"\d+\.\d+", text)) > 3
+        ]
+        return sum(indicators) >= 2  # If at least 2 indicators are present
+    
+    try:
+        reader = PdfReader(pdf_file_path)
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.3,
+            openai_api_key=openai_api_key
+        )
+        
+        # Process each page
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            page_text_blocks = text.split('\n\n')  # Split into logical blocks
+            
+            # Process each text block for tables
+            for block_index, block in enumerate(page_text_blocks):
+                if is_likely_table(block):
+                    table_filename = f"table_{i}_{block_index}.txt"
+                    table_path = os.path.join(output_dir, table_filename)
+                    
+                    with open(table_path, "w", encoding="utf-8") as f:
+                        f.write(block)
+                    
+                    table_prompt = ChatPromptTemplate.from_template("""
+                    Analyze this potential table content and provide a brief summary:
+                    {content}
+                    
+                    If this appears to be tabular data, summarize what information it contains in 1-2 sentences.
+                    If this is not actually a table, respond with "Not a table".
+                    """)
+                    
+                    table_chain = table_prompt | llm | StrOutputParser()
+                    
+                    try:
+                        caption = table_chain.invoke({"content": block})
+                        if "not a table" not in caption.lower():
+                            all_results.append({
+                                "type": "table",
+                                "file_path": table_path,
+                                "caption": caption
+                            })
+                    except Exception as e:
+                        print(f"Error analyzing table on page {i}: {str(e)}")
+            
+            # Look for figure references
+            figure_references = re.findall(r"(?i)figure\s+\d+|fig\.\s*\d+", text)
+            if figure_references:
+                figure_filename = f"figure_context_{i}.txt"
+                figure_path = os.path.join(output_dir, figure_filename)
+                
+                with open(figure_path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                
+                figure_prompt = ChatPromptTemplate.from_template("""
+                This page contains references to figures: {figures}
+                Based on the surrounding text, provide a brief description of what these figures might show:
+                {content}
+                Describe in 1-2 sentences what type of visual information might be presented.
+                """)
+                
+                figure_chain = figure_prompt | llm | StrOutputParser()
+                
+                try:
+                    caption = figure_chain.invoke({
+                        "figures": ", ".join(figure_references),
+                        "content": text
+                    })
+                    
+                    all_results.append({
+                        "type": "figure_reference",
+                        "file_path": figure_path,
+                        "caption": caption
+                    })
+                except Exception as e:
+                    print(f"Error analyzing figures on page {i}: {str(e)}")
+    
+    except Exception as e:
+        print(f"Error processing PDF: {str(e)}")
+        return []
+    
+    return all_results
+
+
+
 
 # =========================================
 # STEP 2: Streamlit UI & Inputs
@@ -33,9 +167,8 @@ st.markdown(
 )
 author_name = st.sidebar.text_input("Enter the author's name:")
 
-# openai_api_key = st.sidebar.text_input("Enter your OpenAI API key:", type="password")
-openai_api_key = "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"
-
+openai_api_key = st.sidebar.text_input("Enter your OpenAI API key:", type="password")
+x
 presentation_focus = st.sidebar.selectbox(
     "Select the target audience or purpose of the presentation:",
     ["Researcher", "Practitioner", "Funding Body"]
@@ -134,114 +267,180 @@ def remove_slide(prs, slide_index):
     del prs.slides._sldIdLst[slide_index]
 
 
-def generate_presentation(slides: list, author_name: str) -> str:
+def generate_presentation(slides: list, author_name: str, extracted_elements: list) -> str:
     """
-    1) Loads 'autodeckai2.pptx' and removes all existing slides.
-    2) Adds a Title slide, content slides, a References slide, and a final Thank You slide.
-    3) Correctly formats lines as bullet points, ensures references are bullet-pointed, etc.
+    Creates a PowerPoint presentation with integrated figures and tables using efficient lookup.
     """
-
-    # -- Load your custom PPTX template
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    
+    # Load template
     prs = Presentation('autodeckai2.pptx')
-
-    # -- Remove all existing slides from the template
+    
+    # Remove existing slides
     for i in range(len(prs.slides) - 1, -1, -1):
         remove_slide(prs, i)
-
-    # == LAYOUT INDICES ==
-    # Adjust these so they match the order in autodeckai2.pptx:
-    TITLE_SLIDE_LAYOUT     = 0
-    CONTENT_SLIDE_LAYOUT   = 1
-    REFERENCES_SLIDE_LAYOUT= 2
+    
+    # Layout indices
+    TITLE_SLIDE_LAYOUT = 0
+    CONTENT_SLIDE_LAYOUT = 1
+    REFERENCES_SLIDE_LAYOUT = 2
     THANK_YOU_SLIDE_LAYOUT = 3
-
-    # == A. TITLE SLIDE ==
-    title_layout = prs.slide_layouts[TITLE_SLIDE_LAYOUT]
-    title_slide  = prs.slides.add_slide(title_layout)
+    
+    # Create element lookup for efficient reference matching
+    element_lookup = {elem['file_path']: elem for elem in extracted_elements}
+    
+    # == A. Title Slide ==
+    title_slide = prs.slides.add_slide(prs.slide_layouts[TITLE_SLIDE_LAYOUT])
     title_placeholder = title_slide.shapes.title
-    subtitle_placeholder = title_slide.placeholders[1]  # Usually the second placeholder is for subtitle
-
+    subtitle_placeholder = title_slide.placeholders[1]
+    
     title_placeholder.text = slides[0].get('title', 'Presentation Title')
     subtitle_placeholder.text = f"Author: {author_name}"
-
-    # == B. MAIN CONTENT SLIDES ==
-    # slides[1:-2] => excludes the first (title), second-last (references), last (thank you)
+    
+    # == B. Main Content Slides ==
     main_slides = slides[1:-2]
-
+    
     for slide_data in main_slides:
-        layout = prs.slide_layouts[CONTENT_SLIDE_LAYOUT]
-        slide = prs.slides.add_slide(layout)
-
-        # Slide title
-        title_ph = slide.shapes.title
-        title_ph.text = slide_data.get('title', 'Untitled Slide')
-
+        slide = prs.slides.add_slide(prs.slide_layouts[CONTENT_SLIDE_LAYOUT])
+        
+        # Add title
+        title_shape = slide.shapes.title
+        title_shape.text = slide_data.get('title', 'Untitled Slide')
+        
         # Content placeholder
-        content_ph = slide.placeholders[1]
-        text_frame = content_ph.text_frame
+        content_shape = slide.placeholders[1]
+        text_frame = content_shape.text_frame
         text_frame.clear()
-
-        content_text = slide_data.get('content', 'No content provided.')
+        
+        # Process content and look for figure/table references
+        content_text = slide_data.get('content', '')
         lines = content_text.split('\n')
-
+        
+        # Track layout position
+        current_y = Inches(2)
+        
         for line in lines:
             line = line.strip()
             if not line:
-                continue  # Skip blank lines
-            paragraph = text_frame.add_paragraph()
-            # If the line starts with '-', we'll treat it as a bullet
-            if line.startswith('-'):
-                paragraph.bullet = True
-                paragraph.text = line.lstrip('-').strip()
+                continue
+            
+            # Check for any referenced elements using lookup
+            referenced_path = None
+            for path in element_lookup.keys():
+                if path in line:
+                    referenced_path = path
+                    break
+            
+            if referenced_path:
+                # Get the element from lookup
+                referenced_element = element_lookup[referenced_path]
+                
+                # Add the text without the file path
+                clean_line = line.replace(referenced_path, '').strip()
+                if clean_line:
+                    p = text_frame.add_paragraph()
+                    p.text = clean_line
+                    if line.startswith('-'):
+                        p.bullet = True
+                    p.font.size = Pt(18)
+                
+                try:
+                    # Add the figure/table
+                    if referenced_element['type'] in ['figure_reference', 'table']:
+                        img_width = Inches(6)
+                        img_left = Inches(1.5)
+                        
+                        # Add figure
+                        slide.shapes.add_picture(
+                            referenced_path,  # Use the path from lookup
+                            img_left,
+                            current_y,
+                            width=img_width
+                        )
+                        
+                        # Add caption
+                        caption_left = img_left
+                        caption_top = current_y + Inches(3)
+                        caption_width = img_width
+                        caption_height = Inches(0.5)
+                        
+                        caption_box = slide.shapes.add_textbox(
+                            caption_left, caption_top,
+                            caption_width, caption_height
+                        )
+                        caption_frame = caption_box.text_frame
+                        caption_para = caption_frame.add_paragraph()
+                        caption_para.text = referenced_element['caption']
+                        caption_para.font.size = Pt(12)
+                        caption_para.font.italic = True
+                        
+                        current_y = caption_top + Inches(0.7)
+                        
+                except Exception as e:
+                    print(f"Error adding element {referenced_path}: {str(e)}")
             else:
-                paragraph.text = line
-
-            paragraph.font.size = Pt(18)
-            paragraph.font.color.rgb = RGBColor(0, 0, 0)
-            paragraph.alignment = PP_ALIGN.LEFT
-            # paragraph.font.name = "Calibri"  # Uncomment if you want a specific font
-
-    # == C. REFERENCES SLIDE ==
-    ref_data = slides[-2]
-    ref_layout = prs.slide_layouts[REFERENCES_SLIDE_LAYOUT]
-    ref_slide = prs.slides.add_slide(ref_layout)
-
-    # Title
+                # Regular text line
+                p = text_frame.add_paragraph()
+                if line.startswith('-'):
+                    p.bullet = True
+                    p.text = line.lstrip('-').strip()
+                else:
+                    p.text = line
+                
+                p.font.size = Pt(18)
+                p.font.color.rgb = RGBColor(0, 0, 0)
+                p.alignment = PP_ALIGN.LEFT
+    
+    # == C. References Slide ==
+    ref_slide = prs.slides.add_slide(prs.slide_layouts[REFERENCES_SLIDE_LAYOUT])
     ref_title = ref_slide.shapes.title
-    ref_title.text = ref_data.get('title', 'References')
-
-    # Reference placeholder
-    ref_content_ph = ref_slide.placeholders[1]
-    ref_text_frame = ref_content_ph.text_frame
-    ref_text_frame.clear()
-
-    references_text = ref_data.get('content', 'No references available.')
+    ref_title.text = slides[-2].get('title', 'References')
+    
+    ref_content = ref_slide.placeholders[1]
+    ref_frame = ref_content.text_frame
+    ref_frame.clear()
+    
+    references_text = slides[-2].get('content', 'No references available.')
     ref_lines = references_text.split('\n')
-
-    # Format each reference line as a bullet
+    
+    # Add references
     for line in ref_lines:
         line = line.strip()
         if not line:
             continue
-        p = ref_text_frame.add_paragraph()
+        p = ref_frame.add_paragraph()
         p.text = line
         p.bullet = True
         p.font.size = Pt(16)
         p.font.color.rgb = RGBColor(80, 80, 80)
         p.alignment = PP_ALIGN.LEFT
-        # p.font.name = "Calibri"
-
-    # == D. THANK YOU SLIDE ==
-    thanks_data = slides[-1]
-    thanks_layout = prs.slide_layouts[THANK_YOU_SLIDE_LAYOUT]
-    thanks_slide = prs.slides.add_slide(thanks_layout)
-
-    thanks_slide.shapes.title.text = thanks_data.get('title', 'Thank You')
+    
+    # Add figure/table attributions using lookup
+    if element_lookup:
+        p = ref_frame.add_paragraph()
+        p.text = "Figure and Table Sources:"
+        p.font.bold = True
+        p.font.size = Pt(16)
+        
+        for path, elem in element_lookup.items():
+            p = ref_frame.add_paragraph()
+            p.text = f"{elem['type'].title()}: {elem['caption']}"
+            p.bullet = True
+            p.font.size = Pt(14)
+    
+    # == D. Thank You Slide ==
+    thanks_slide = prs.slides.add_slide(prs.slide_layouts[THANK_YOU_SLIDE_LAYOUT])
+    thanks_title = thanks_slide.shapes.title
+    thanks_title.text = slides[-1].get('title', 'Thank You')
+    
     if len(thanks_slide.placeholders) > 1:
         thanks_subtitle = thanks_slide.placeholders[1]
-        thanks_subtitle.text = thanks_data.get('content', 'We appreciate your attention!')
-
-    # == SAVE ==
+        thanks_subtitle.text = slides[-1].get('content', 'We appreciate your attention!')
+    
+    # Save the presentation
     output_filename = "generated_presentation.pptx"
     prs.save(output_filename)
     return output_filename
@@ -268,24 +467,79 @@ if st.sidebar.button("Create Demo Slides"):
         st.download_button("Download PPTX", f.read(), "generated_presentation.pptx")
 
 
-def create_chroma_vectorstore(text: str, openai_api_key: str, persist_dir: str = "chroma_storage"):
+def create_chroma_vectorstore(text: str, openai_api_key: str, persist_dir: str = "./chroma_db"):
     """
-    Splits text into chunks, embeds them with OpenAIEmbeddings,
-    and creates or loads a local Chroma vector store.
+    Creates a vector store using ChromaDB with proper tenant handling and persistence.
+    
+    Args:
+        text (str): The input text to be processed
+        openai_api_key (str): OpenAI API key for embeddings
+        persist_dir (str): Directory to persist the vector store
     """
+    import os
+    import shutil
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_openai import OpenAIEmbeddings
+    from langchain_chroma import Chroma
+    import chromadb
+    from chromadb.config import Settings
+    
+    collection_name = "eco_slides"
+    
+    # Initialize embeddings
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-ada-002", 
+        openai_api_key=openai_api_key
+    )
+    
+    # Text splitting
     splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
     chunks = splitter.split_text(text)
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=openai_api_key)
+    
+    try:
+        # Clean up existing directory if it exists
+        if os.path.exists(persist_dir):
+            shutil.rmtree(persist_dir)
+        
+        # Create fresh persistence directory
+        os.makedirs(persist_dir, exist_ok=True)
+        
+        # Initialize ChromaDB client with explicit settings
+        settings = Settings(
+            chroma_db_impl="duckdb+parquet",
+            persist_directory=persist_dir,
+            anonymized_telemetry=False
+        )
+        
+        # Create new vector store
+        vectorstore = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            persist_directory=persist_dir,
+            client_settings=settings,
+            collection_name=collection_name
+        )
+        
+        # Ensure persistence
+        try:
+            vectorstore.persist()
+        except Exception as persist_error:
+            print(f"Warning: Persistence error: {str(persist_error)}")
+        
+        return vectorstore
+        
+    except Exception as e:
+        print(f"Error in ChromaDB setup: {str(e)}")
+        
+        # If everything fails, use in-memory FAISS as fallback
+        from langchain_community.vectorstores import FAISS
+        print("Falling back to in-memory FAISS vectorstore")
+        return FAISS.from_texts(
+            texts=chunks,
+            embedding=embeddings
+        )
 
-    # If the directory already has an index, load it; otherwise create a new one
-    # if os.path.exists(persist_dir) and os.listdir(persist_dir):
-    #     vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-    # else:
-    vectorstore = Chroma.from_texts(texts=chunks, embedding=embeddings, persist_directory=persist_dir)
-    # vectorstore.persist()
-    return vectorstore
-
-def generate_slides_with_retrieval(vectorstore, presentation_focus: str, num_slides: int, openai_api_key: str):
+def generate_slides_with_retrieval(vectorstore, presentation_focus: str, num_slides: int, extracted_elements: list, openai_api_key: str):
     """
     Uses a RetrievalQA chain (with 'stuff' approach) to combine retrieved content
     into a final LLM prompt that yields slides in structured format.
@@ -302,33 +556,40 @@ def generate_slides_with_retrieval(vectorstore, presentation_focus: str, num_sli
     #     "Slide 1 Content: [Content]\n"
     #     "... up to Slide N.\n"
     # )
+    figures_info = "\nAvailable Figures and Tables:\n"
+    for elem in extracted_elements:
+        figures_info += f"- {elem['type'].title()}: {elem['caption']}\n"
+    
     prompt_text = (
         f"As a **{presentation_focus}**, create a slide presentation with **{num_slides}** total slides "
-        "using the content provided. Your presentation must include:\n\n"
+        "using the content provided. You have access to the following figures and tables that you can incorporate:\n"
+        f"{figures_info}\n"
+        "Your presentation must include:\n\n"
         "1. **Title Page** (Slide 1):\n"
         "   - Only the main title (paper or project name) and author name(s).\n\n"
         "2. **Main Slides** (Slides 2 through N-2):\n"
         "   - Each slide has:\n"
-        "       - A clear, descriptive title (e.g., 'Methodology', 'Results', etc.).\n"
-        "       - Bullet-pointed content that summarizes key points relevant for an ecological or scientific audience.\n"
-        "   - Incorporate ecological or scientific details if available.\n\n"
+        "       - A clear, descriptive title (e.g., 'Methodology', 'Results', etc.)\n"
+        "       - Bullet-pointed content that summarizes key points\n"
+        "       - Where appropriate, include [FIGURE X] or [TABLE X] markers to indicate where specific figures "
+        "         or tables should be placed (use the exact file paths from the available figures)\n"
+        "   - When referencing figures or tables, integrate them naturally into the content\n"
+        "   - Ensure proper attribution for any included figures\n\n"
         "3. **Conclusion** (Slide N-1):\n"
-        "   - Summarize main findings or takeaways.\n"
-        "   - Include any recommendations or final thoughts.\n\n"
+        "   - Summarize main findings or takeaways\n"
+        "   - Include any recommendations\n\n"
         "4. **References** (Slide N):\n"
-        "   - List relevant sources or citations extracted from the PDF if possible.\n"
-        "   - Use a simple bullet format. If no references are found, you may list 'No references available.'\n\n"
-        "5. **Thank You** (Final Slide, if it fits within the same slide or add one more):\n"
-        "   - A brief closing message like 'Thank you for your attention!'\n\n"
-        "Format your response with the exact structure:\n"
-        "Slide 1 Title: [Title]\n"
-        "Slide 1 Content: [Content]\n"
-        "Slide 2 Title: [Title]\n"
-        "Slide 2 Content: [Content]\n"
-        "... up to Slide N.\n\n"
-        "Remember:\n"
-        "- The first slide (Slide 1) has only title and author.\n"
-        "- The final slides must include Conclusion, References, and a Thank You message.\n"
+        "   - List sources and include attributions for any used figures\n\n"
+        "5. **Thank You** (Final Slide):\n"
+        "   - Brief closing message\n\n"
+        "Format each slide as:\n"
+        "Slide X Title: [Title]\n"
+        "Slide X Content: [Content]\n"
+        "[Optional] Slide X Figure: [full file path from available figures]\n\n"
+        "Important:\n"
+        "- When including figures, specify the exact file path\n"
+        "- Place figure references where they naturally fit in the content\n"
+        "- Include proper attribution in the references slide\n"
     )
 
 
@@ -380,16 +641,29 @@ if generate_slides_clicked:
 
             vectorstore = create_chroma_vectorstore(cleaned_text, openai_api_key)
 
+                # 3) NEW: Extract & caption PDF images/tables
+            extracted_elements = extract_and_caption_pdf_elements(
+                pdf_file_path=file_path,
+                openai_api_key=openai_api_key,
+                output_dir="content/"
+            )
+
+            # 4) (Optional) Print or log the extracted elements
+            st.write("Extracted Tables/Images:")
+            for elem in extracted_elements:
+                st.write(f"Type: {elem['type']}, File: {elem['file_path']}, Caption: {elem['caption']}")
+
+
             progress_bar.progress(70)
             status_placeholder.info("Generating slides via LLM retrieval...")
 
-            llm_response = generate_slides_with_retrieval(vectorstore, presentation_focus, num_slides, openai_api_key)
+            llm_response = generate_slides_with_retrieval(vectorstore, presentation_focus, num_slides, extracted_elements, openai_api_key)
             slides = parse_llm_response(llm_response)
 
             progress_bar.progress(90)
             status_placeholder.info("Creating PowerPoint presentation...")
 
-            pptx_file = generate_presentation(slides, author_name)
+            pptx_file = generate_presentation(slides, author_name, extracted_elements)
 
             progress_bar.progress(100)
             st.success("🎉 Slides generated successfully!")
