@@ -54,3 +54,33 @@ slide_structures = {
     "Conclusion & Next Steps"
     ]
 }
+
+
+    prompt = (
+        f"As a **{presentation_focus}**, you have the following ecological text:\n\n"
+        f"{preprocessed_text}\n\n"
+        "Please **create a presentation** with "
+        f"**{num_slides} slides**, covering **all crucial details** in an **eco-centric** context.\n"
+        "\n**Requirements:**\n"
+        "1. Each slide must have a **Title** and **Content**.\n"
+        "2. Titles should be **concise** but **descriptive**.\n"
+        "3. Content should be in **bullet-point format**, emphasizing:\n"
+        "   - Key ecological findings\n"
+        "   - Methodological or practical details\n"
+        "   - Data reliability or evidence strength (where applicable)\n"
+        "   - Real-world applications or ROI (depending on the audience)\n"
+        "4. Maintain **logical flow** across slides (e.g., introduction, methods, results, discussion, etc.).\n"
+        "5. Address **limitations**, **challenges**, or **open questions** if relevant.\n"
+        "6. **Format** your response strictly as:\n"
+        "Slide 1 Title: [Title]\n"
+        "Slide 1 Content: [Content]\n"
+        "Slide 2 Title: [Title]\n"
+        "Slide 2 Content: [Content]\n"
+        "...and so on, up to Slide N.\n"
+        "\n**Important:**\n"
+        " - Keep each slide **succinct** but **informative**.\n"
+        " - Tailor your language and detail level to a **{presentation_focus}** audience.\n"
+        " - Incorporate any **crucial metrics** or **supporting data** from the text (if available).\n"
+        " - Ensure the final structure is suitable for a slide deck.\n\n"
+        "Now, generate the slides according to these instructions."
+    )
