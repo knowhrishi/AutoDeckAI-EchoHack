@@ -4,6 +4,7 @@ langchain-openai
 markitdown
 openai
 pdfplumber
+pymupdf
 python-pptx
 requests
 streamlit
