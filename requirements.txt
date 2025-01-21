@@ -1,3 +1,4 @@
+faiss-cpu
 langchain
 langchain_chroma
 langchain-openai
@@ -10,4 +11,4 @@ pypdf2
 python-pptx
 requests
 streamlit
-unstructured 
+unstructured
