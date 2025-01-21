@@ -1,5 +1,7 @@
 langchain
+langchain-openai
 markitdown
+openai
 pdfplumber
 python-pptx
 requests
