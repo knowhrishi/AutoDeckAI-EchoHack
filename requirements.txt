@@ -1,4 +1,5 @@
 langchain
+langchain_chroma
 langchain-openai
 markitdown
 openai
