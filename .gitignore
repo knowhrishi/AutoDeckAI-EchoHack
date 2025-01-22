@@ -13,3 +13,7 @@ chroma_storage/
 content/
 vector_cache/
 static/
+
+*.txt
+*.jpg
+*.png
