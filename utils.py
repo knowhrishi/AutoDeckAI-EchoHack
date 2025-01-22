@@ -14,6 +14,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import PyPDFLoader
 
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 
 def download_pdf_from_url(url: str) -> str:
     """Downloads a PDF from a given URL and returns the local file path."""
@@ -33,8 +36,8 @@ def extract_content_from_pdf(file_path: str) -> str:
 
 def preprocess_text_for_ecology(text: str) -> str:
     """Removes headers, footers, or references to clean the text."""
-    cleaned_text = re.sub(r"\nReferences.*", "", text, flags=re.IGNORECASE)
-    cleaned_text = re.sub(r"\nPage \d+", "", cleaned_text)
+    # cleaned_text = re.sub(r"\nReferences.*", "", text, flags=re.IGNORECASE)
+    cleaned_text = re.sub(r"\nPage \d+", "", text)
     return cleaned_text
 
 def parse_llm_response(response_content: str) -> List[Dict[str, str]]:
@@ -364,7 +367,7 @@ def generate_presentation(slides: list, author_name: str, extracted_elements: li
                 p.font.size = Pt(18)
             
             # Add figures below text
-            current_y = Inches(3)
+            current_y = Inches(3)  # Start figures below text
             for elem in figures_to_add:
                 try:
                     file_path = elem['static_path']
@@ -388,47 +391,29 @@ def generate_presentation(slides: list, author_name: str, extracted_elements: li
                         
                         # Add caption
                         caption_top = current_y + Inches(picture.height / 914400) + Inches(0.1)
+                        caption_box = slide.shapes.add_textbox(
+                            img_left,
+                            caption_top,
+                            img_width,
+                            Inches(0.5)
+                        )
+                        caption_para = caption_box.text_frame.add_paragraph()
+                        caption_para.text = f"Figure {elem['figure_number']}: {elem['caption']}"
+                        caption_para.font.size = Pt(12)
+                        caption_para.font.italic = True
+                        
+                        current_y = caption_top + Inches(0.7)
                         
                     else:  # Table
-                        # Create textbox for table content
-                        table_width = Inches(6)
-                        table_left = Inches(1.5)
+                        current_y = Inches(add_formatted_table_element(slide, elem, current_y/Inches(1)))
                         
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            table_content = f.read()
                         
-                        table_box = slide.shapes.add_textbox(
-                            table_left,
-                            current_y,
-                            table_width,
-                            Inches(2)
-                        )
-                        tf = table_box.text_frame
-                        p = tf.add_paragraph()
-                        p.text = table_content
-                        p.font.size = Pt(12)
-                        
-                        caption_top = current_y + Inches(2) + Inches(0.1)
-                    
-                    # Add caption
-                    caption_box = slide.shapes.add_textbox(
-                        img_left if elem['type'].lower() == 'figure' else table_left,
-                        caption_top,
-                        img_width if elem['type'].lower() == 'figure' else table_width,
-                        Inches(0.5)
-                    )
-                    caption_para = caption_box.text_frame.add_paragraph()
-                    caption_para.text = f"{elem['type'].title()} {elem['figure_number']}: {elem['caption']}"
-                    caption_para.font.size = Pt(12)
-                    caption_para.font.italic = True
-                    
-                    current_y = caption_top + Inches(0.7)
                     print(f"Successfully added {elem['type']} {elem['figure_number']}")
                     
                 except Exception as e:
                     print(f"Error adding {elem['type']} {elem['figure_number']}: {str(e)}")
                     continue
-        
+
         # Add References slide
         ref_slide = prs.slides.add_slide(prs.slide_layouts[REFERENCES_SLIDE_LAYOUT])
         ref_title = ref_slide.shapes.title
@@ -661,3 +646,112 @@ def extract_and_caption_pdf_elements(
         import traceback
         traceback.print_exc()
         return []
+    
+def format_table_content(content: str) -> list:
+    """Convert table text content into structured rows."""
+    lines = [line.strip() for line in content.split('\n') if line.strip()]
+    rows = []
+    current_row = []
+    
+    for line in lines:
+        # Split by common delimiters
+        if '|' in line:
+            cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+        elif '\t' in line:
+            cells = [cell.strip() for cell in line.split('\t') if cell.strip()]
+        else:
+            # For text that might be cell content
+            cells = [line]
+            
+        if cells:
+            current_row.extend(cells)
+            
+        # Start new row if we have enough cells or special markers
+        if len(current_row) > 0 and (len(current_row) >= 3 or line.endswith('.')):
+            rows.append(current_row)
+            current_row = []
+            
+    # Add any remaining content
+    if current_row:
+        rows.append(current_row)
+        
+    return rows
+
+def add_table_to_slide(slide, content: str, left: float, top: float, width: float) -> float:
+    """Add a formatted table to the slide and return the bottom position."""
+    try:
+        # Format the content into rows
+        rows = format_table_content(content)
+        if not rows:
+            return top
+            
+        # Determine number of columns
+        max_cols = max(len(row) for row in rows)
+        
+        # Create table
+        table_height = Inches(0.4) * len(rows)  # Estimate height
+        table = slide.shapes.add_table(
+            len(rows), max_cols,
+            Inches(left),
+            Inches(top),
+            Inches(width),
+            table_height
+        ).table
+        
+        # Format table
+        for i, row in enumerate(rows):
+            for j, cell in enumerate(row):
+                if j < max_cols:  # Ensure we don't exceed table columns
+                    table.cell(i, j).text = cell.strip()
+                    # Format text
+                    paragraph = table.cell(i, j).text_frame.paragraphs[0]
+                    paragraph.font.size = Pt(10)
+                    paragraph.font.name = "Calibri"
+                    
+                    # First row formatting
+                    if i == 0:
+                        paragraph.font.bold = True
+                        table.cell(i, j).fill.solid()
+                        table.cell(i, j).fill.fore_color.rgb = RGBColor(240, 240, 240)
+        
+        # Auto-fit
+        table.columns[0].width = Inches(width / max_cols)
+        
+        # Return the position below the table
+        return top + (table_height / Inches(1)) + 0.2
+        
+    except Exception as e:
+        print(f"Error adding table: {str(e)}")
+        return top
+
+def add_formatted_table_element(slide, elem, current_y):
+    """Add a table element with proper formatting."""
+    try:
+        # Set dimensions
+        table_width = 6  # inches
+        table_left = 1.5  # inches
+        
+        # Read table content
+        with open(elem['static_path'], 'r', encoding='utf-8') as f:
+            table_content = f.read()
+        
+        # Add table
+        new_y = add_table_to_slide(slide, table_content, table_left, current_y, table_width)
+        
+        # Add caption
+        caption_box = slide.shapes.add_textbox(
+            Inches(table_left),
+            Inches(new_y),
+            Inches(table_width),
+            Inches(0.5)
+        )
+        caption_para = caption_box.text_frame.add_paragraph()
+        caption_para.text = f"Table {elem['figure_number']}: {elem['caption']}"
+        caption_para.font.size = Pt(12)
+        caption_para.font.italic = True
+        
+        return new_y + 0.7  # Return position below caption
+        
+    except Exception as e:
+        print(f"Error adding formatted table: {str(e)}")
+        return current_y + 3  # Return estimated position in case of error

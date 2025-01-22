@@ -2,25 +2,7 @@
 # STEP 1: Imports & Basic Setup
 # =========================================
 import os
-import re
-import requests
 import streamlit as st
-
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_community.document_loaders import PyPDFLoader, PyMuPDFLoader
-
-from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import FAISS
-
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-from pptx.enum.shapes import MSO_SHAPE
-
-
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 
 from utils import (
     download_pdf_from_url,
@@ -36,57 +18,9 @@ from PyPDF2 import PdfReader
 from faiss_vector_store import create_vectorstore
 
 
-# st.set_page_config(page_title="Eco-centric Slide Generator", layout="centered")
-# st.title("🌿 Eco-centric Slide Generator")
-# st.markdown(
-#     """
-#     This tool converts **ecological research PDFs** (or via a DOI/URL) into **professionally formatted** PowerPoint slides.
-#     """
-# )
-# author_name = st.sidebar.text_input("Enter the author's name:")
-
-# # openai_api_key = st.sidebar.text_input("Enter your OpenAI API key:", type="password")
-# openai_api_key = "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"
-
-# presentation_focus = st.sidebar.selectbox(
-#     "Select the target audience or purpose of the presentation:",
-#     ["Researcher", "Practitioner", "Funding Body"]
-# )
-# num_slides = st.sidebar.number_input("Enter the number of slides to generate (including title slide):", min_value=1, value=7)
-
-# input_type = st.sidebar.radio("Select Input Type:", ["Upload PDF", "Enter DOI/URL"])
-# uploaded_file = None
-# doi_or_url = None
-
-# if input_type == "Upload PDF":
-#     uploaded_file = st.sidebar.file_uploader("📄 Upload a PDF document", type=["pdf"])
-# elif input_type == "Enter DOI/URL":
-#     doi_or_url = st.sidebar.text_input("🔗 Enter DOI or URL:")
-
-
-# st.sidebar.write("---")
-# # For demonstration:
-# st.sidebar.markdown("🛠️ Only for testing purpose")
-# if st.sidebar.button("Create Demo Slides"):
-#     # add markdown saying that it is for testing purposes
-#     sample_slides = [
-#         {"title": "Introduction", "content": ""},
-#         {"title": "Overview", "content": "- Purpose\n- Scope\n- Approach"},
-#         {"title": "Results", "content": "- Observed data\n- Statistical insights\n\n- Graphical analysis"},
-#         {"title": "References", "content": "- Smith et al. 2020\n- Doe and Roe, 2019"},
-#         {"title": "Thank You", "content": "Feel free to reach out with any questions!"}
-#     ]
-#     file_path = generate_presentation(sample_slides, author_name="Jane Doe")
-#     st.success("Presentation generated!")
-#     with open(file_path, "rb") as f:
-#         st.download_button("Download PPTX", f.read(), "generated_presentation.pptx")
-
-
-# =========================================
-#  Streamlit UI & Inputs
-# =========================================
-st.set_page_config(page_title="Eco-centric Slide Generator", layout="centered")
-st.title("🌿 Eco-centric Slide Generator")
+st.set_page_config(page_title="AutoDeckAI Eco-centric Slide Generator", layout="wide")
+# st.title("")
+st.title("AutoDeckAI: 🌿 Eco-centric Slide Generator")
 st.markdown(
     """
     This tool helps **ecologist** to convert their idea into a **professionally formatted** PowerPoint slides.
@@ -94,10 +28,10 @@ st.markdown(
 )
 
 with st.sidebar:
-    with st.expander("OpenAI API key", expanded=False):
+    with st.expander("🔑 OpenAI API key", expanded=False):
         openai_api_key = st.text_input("Enter your OpenAI API key:", type="password")
 
-    with st.expander("Configuration", expanded=True):
+    with st.expander("🛠️ Configuration", expanded=True):
         author_name = st.text_input("Enter the author's name:")
 
         presentation_focus = st.selectbox(
@@ -120,7 +54,7 @@ with abstract:
 
 # Add widgets to the second column
 with suplementary:
-    st.header("Supplementaries")
+    st.header("⚡ Supplementaries")
     # File uploader for multiple files
     uploaded_files = st.file_uploader(
         "📚 Choose pictures or PDFs/Docs to upload:",
