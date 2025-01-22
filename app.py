@@ -225,8 +225,7 @@ st.markdown(
 )
 author_name = st.sidebar.text_input("Enter the author's name:")
 
-# openai_api_key = st.sidebar.text_input("Enter your OpenAI API key:", type="password")
-openai_api_key = "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"
+openai_api_key = st.sidebar.text_input("Enter your OpenAI API key:", type="password")
 
 presentation_focus = st.sidebar.selectbox(
     "Select the target audience or purpose of the presentation:",

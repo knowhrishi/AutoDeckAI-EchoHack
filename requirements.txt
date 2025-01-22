@@ -1,10 +1,14 @@
+faiss-cpu
 langchain
 langchain_chroma
 langchain-openai
 markitdown
 openai
 pdfplumber
+pi_heif
 pymupdf
+pypdf2
 python-pptx
 requests
 streamlit
+unstructured
