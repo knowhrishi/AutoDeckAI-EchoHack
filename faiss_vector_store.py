@@ -1,13 +1,17 @@
+# faiss_vector_store.py
 import hashlib
 import os
 from typing import Optional
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
 
-def get_document_hash(text: str) -> str:
-    """Generate a unique hash for the document content."""
-    return hashlib.sha256(text.encode()).hexdigest()
+def get_document_hash(text: str, model_provider: str, model_name: str) -> str: 
+    """Generate a unique hash for the document content and model info."""
+    combined = f"{text}-{model_provider}-{model_name}"
+    return hashlib.sha256(combined.encode()).hexdigest()
+
 
 def get_cache_path(doc_hash: str) -> str:
     """Get the cache directory path for vectors."""
@@ -22,33 +26,44 @@ def load_cached_vectorstore(cache_path: str, embeddings) -> Optional[FAISS]:
             return FAISS.load_local(
                 folder_path=cache_path,
                 embeddings=embeddings,
-                allow_dangerous_deserialization=True  # We trust our own cache
+                allow_dangerous_deserialization=True 
             )
         return None
     except Exception as e:
         print(f"Error loading cached vectors: {str(e)}")
         return None
 
-def create_vectorstore(text: str, openai_api_key: str) -> 'FAISS':
+def create_vectorstore(text: str, api_key: str, model_provider: str) -> FAISS:  
     """
     Creates or loads a FAISS vector store with persistence.
     
     Args:
         text (str): The input text to be processed
-        openai_api_key (str): OpenAI API key for embeddings
+        api_key (str): API key for the embedding service
+        model_provider (str): "OpenAI" or "Hugging Face"
         
     Returns:
         FAISS: The vector store instance
     """
     try:
         # Initialize embeddings
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-ada-002",
-            openai_api_key=openai_api_key
-        )
+        if model_provider == "OpenAI":
+            embeddings = OpenAIEmbeddings(
+                model="text-embedding-ada-002",
+                openai_api_key=api_key
+            )
+            model_name = "text-embedding-ada-002"
+        else:
+            # Default Hugging Face model
+            model_name = "sentence-transformers/all-mpnet-base-v2"
+            embeddings = HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={"device": "cpu"},  # Change to "cuda" if using GPU
+                encode_kwargs={"normalize_embeddings": False}
+            )
         
         # Generate document hash and cache path
-        doc_hash = get_document_hash(text)
+        doc_hash = get_document_hash(text, model_provider, model_name) 
         cache_path = get_cache_path(doc_hash)
         
         # Try to load cached vectors
@@ -60,10 +75,19 @@ def create_vectorstore(text: str, openai_api_key: str) -> 'FAISS':
         print("Creating new vectors")
         # Text splitting with error handling
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500,
-            chunk_overlap=200,
+            chunk_size=2000,
+            chunk_overlap=300,
+            separators=[
+                "\n\n## ",  # Markdown headers
+                "\n\n", 
+                ". ",
+                "! ",
+                "? ",
+                ", ",
+                " ",
+            ],
             length_function=len,
-            add_start_index=True,
+            keep_separator=True
         )
         
         chunks = splitter.split_text(text)
@@ -97,7 +121,6 @@ def create_vectorstore(text: str, openai_api_key: str) -> 'FAISS':
             embedding=embeddings
         )
 
-# Optional: Cleanup function for managing cache
 def cleanup_vector_cache(max_cache_size_mb: int = 500, min_cache_age_days: int = 7):
     """
     Clean up old vector cache files to manage storage.
