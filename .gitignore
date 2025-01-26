@@ -13,7 +13,7 @@ chroma_storage/
 content/
 vector_cache/
 static/
-
+.DS_Store
 *.txt
 *.jpg
 *.png
