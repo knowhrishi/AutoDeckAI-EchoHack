@@ -24,9 +24,15 @@ cleanup_vector_cache(max_cache_size_mb=500, min_cache_age_days=1)
 
 st.set_page_config(page_title="AutoDeckAI Eco-centric Slide Generator", layout="wide")
 st.title("AutoDeckAI: 🌿 Eco-centric Slide Generator")
+
 st.markdown(
     """This tool helps **ecologists** convert research papers and other docs into **practice-oriented presentations**."""
 )
+# Add warning banner here
+st.warning("""
+⚠️ **Note:** Hugging Face model integration is currently under development. 
+For production use, please select OpenAI as your model provider.
+""")
 # Custom CSS for ecological theme
 st.markdown("""
     <style>
@@ -56,7 +62,7 @@ with st.sidebar:
             "Select Model Provider:",
             [
                 "OpenAI", 
-                # "Hugging Face (Open Source)"
+                "Hugging Face (Open Source)"
             ],
             index=0,
             key="model_provider_selectbox_1"  
