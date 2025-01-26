@@ -1,0 +1,19 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# PowerPoint files
+*.pptx
+
+# PDF files
+*.pdf
+
+# Chroma storage directory
+chroma_storage/
+content/
+vector_cache/
+static/
+
+*.txt
+*.jpg
+*.png
