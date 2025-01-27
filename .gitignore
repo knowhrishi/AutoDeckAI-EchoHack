@@ -1,19 +1,51 @@
-# Python cache files
-__pycache__/
-*.pyc
-
-# PowerPoint files
-*.pptx
-
-# PDF files
-*.pdf
-
 # Chroma storage directory
 chroma_storage/
 content/
 vector_cache/
 static/
-.DS_Store
+
+# Byte-compiled Python files
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual environment directories
+venv/
+env/
+.venv/
+.env/
+
+# IDE-related files
+.idea/
+.vscode/
+*.swp
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Ignoring all txt files except requirements.txt
 *.txt
+!requirements.txt
+
+# Streamlit-specific
+.streamlit/
+
+# Cache files
+.DS_Store
+.cache/
+__pycache__/
+
+# Ignore uploaded files (pptx, doc, docx, pdf, ppt, jpg, png)
+*.pptx
+*.doc
+*.docx
+*.pdf
+*.ppt
 *.jpg
+*.jpeg
 *.png
