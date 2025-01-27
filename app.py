@@ -125,13 +125,19 @@ with st.sidebar:
             min_value=5, max_value=25, value=9, step=1,
             key="num_slides_number_input"  
         )
-    with st.expander("🌍 Ecological Settings", expanded=True):
+    with st.expander("🌍 Settings", expanded=True):
 
-        ecological_theme = st.selectbox(
-            "Visual Theme:",
-            ["Forest Ecosystem", "Marine Biology", "Climate Science", "Wildlife Conservation"],
+        THEME_FILES = {
+            "Default Black": "templates/autodeckai2.pptx",
+            "Forest Theme": "templates/forest_theme.pptx",
+        }
+        selected_theme_key = st.selectbox(
+            "Select Your PPT Theme:",
+            list(THEME_FILES.keys()),
             index=0
         )
+        selected_theme_file = THEME_FILES[selected_theme_key]
+
 
         include_metrics = st.checkbox("Include Sustainability Metrics", True)
         data_visualization = st.multiselect(
@@ -322,7 +328,7 @@ if st.button("🚀 Generate Slide Deck"):
             model_provider=model_provider,
             model_name=model_name,
             api_key=openai_api_key if model_provider == "OpenAI" else hf_api_key,
-            ecological_theme=ecological_theme,
+            # ecological_theme=ecological_theme,
             data_visualization=data_visualization
         )
 
@@ -345,7 +351,8 @@ if st.button("🚀 Generate Slide Deck"):
                 slides=slides,
                 author_name=author_name,
                 extracted_elements=all_extracted_elements,
-                text_llm=text_llm
+                text_llm=text_llm,
+                theme_file=selected_theme_file,
             )
         )
         loop.close()

@@ -220,7 +220,7 @@ def generate_slides_with_retrieval(
     model_provider: str,  # Add this parameter
     model_name: str,       # Add this parameter
     api_key: str,           # Add this parameter,
-    ecological_theme: str,
+    # ecological_theme: str,
     data_visualization: List[str]
 
 ) -> str:
@@ -246,7 +246,12 @@ def generate_slides_with_retrieval(
             marker = f"[TABLE {tab['figure_number']}]"
             tables_info += f"- {marker}: {tab['caption']}\\n"
 
-        prompt_text = create_slide_prompt(presentation_focus, num_slides, figures_info, tables_info, ecological_theme, data_visualization)
+        prompt_text = create_slide_prompt(
+            presentation_focus, num_slides, 
+            figures_info, 
+            tables_info, 
+            # ecological_theme, 
+            data_visualization)
         llm = get_llm(model_provider, model_name, api_key)
 
         chain = RetrievalQA.from_chain_type(
@@ -273,9 +278,13 @@ def generate_slides_with_retrieval(
         print(f"Error in slide generation: {str(e)}")
         return generate_default_slides()
 
-def create_slide_prompt(presentation_focus: str, num_slides: int, 
-                       figures_info: str, table_info: str, 
-                       ecological_theme: str, data_visualization: list) -> str:
+def create_slide_prompt(
+        presentation_focus: str, 
+        num_slides: int, 
+        figures_info: str, 
+        table_info: str,
+        # ecological_theme: str, 
+        data_visualization: list) -> str:
     """Creates an improved prompt for structured slide generation."""
     return (
         f"As an ecology/environmental science **{presentation_focus}**, create a **{num_slides}-slide** presentation focusing on sustainable and eco-friendly research insights. "
@@ -286,7 +295,7 @@ def create_slide_prompt(presentation_focus: str, num_slides: int,
         "TABLES AVAILABLE:\n"
         f"{table_info}\n\n"
         " 1. **Theme Integration**: \n"
-        f"Apply {ecological_theme} visual metaphors\n"
+        # f"Apply {ecological_theme} visual metaphors\n"
         f" Use {', '.join(data_visualization)} visualizations where appropriate\n"
         "**Structure Requirements:**\n\n"
         "1. **Title Slide** (Slide 1):\n"
@@ -417,185 +426,197 @@ def remove_slide(prs: Presentation, slide_index: int):
     del prs.slides._sldIdLst[slide_index]
 
 def update_slide_content_with_figures(content: str, element_lookup: Dict[str, Any]) -> str:
-    """Updates slide content with correct figure references."""
+    """
+    If you need to replace placeholders [FIGURE 1] with actual file paths, do it here.
+    (Currently not used in this code, but can be helpful in certain flows.)
+    """
     updated_content = content
-    number_to_elem = {
-        elem['figure_number']: elem 
-        for elem in element_lookup.values()
-    }
-    
-    for num in range(1, len(number_to_elem) + 1):
+    number_to_elem = {elem['figure_number']: elem for elem in element_lookup.values()}
+    for num, elem in number_to_elem.items():
         figure_pattern = f"[FIGURE {num}]"
         table_pattern = f"[TABLE {num}]"
-        
         if figure_pattern in content or table_pattern in content:
-            if num in number_to_elem:
-                elem = number_to_elem[num]
-                pattern = figure_pattern if elem['type'].lower() == 'figure' else table_pattern
-                updated_content = updated_content.replace(
-                    pattern,
-                    f"{pattern} {elem['file_path']}"
-                )
-    
+            pattern = figure_pattern if elem['type'].lower() == 'figure' else table_pattern
+            updated_content = updated_content.replace(pattern, f"{pattern} {elem['file_path']}")
     return updated_content
 
-async def generate_presentation(slides: list, author_name: str, extracted_elements: list, text_llm) -> str:
+async def generate_presentation(
+    slides: list, 
+    author_name: str, 
+    extracted_elements: list, 
+    text_llm,
+    theme_file: str
+) -> str:
+    """
+    Build the final PPTX, ensuring images and tables fit.
+    If they don't fit, we either scale or move to a new slide.
+    """
+    from pptx import Presentation
+    import traceback
+
     try:
+        # Build a lookup for figure/table references
         element_lookup = {}
         for elem in extracted_elements:
             key = f"[{elem['type'].upper()} {elem['figure_number']}]"
             element_lookup[key] = elem
             print(f"Added {key} to lookup with path: {elem['static_path']}")
 
-        prs = Presentation('autodeckai2.pptx')
-        
-        # Remove existing slides
+        prs = Presentation(theme_file)
+
+        # Remove existing slides from template
         for i in range(len(prs.slides) - 1, -1, -1):
             remove_slide(prs, i)
-        
-        # Layout indices
+
+        # Adjust these to match your template
         TITLE_SLIDE_LAYOUT = 0
         CONTENT_SLIDE_LAYOUT = 1
         REFERENCES_SLIDE_LAYOUT = 2
         THANK_YOU_SLIDE_LAYOUT = 3
-        
-        # Title Slide
+
+        # 1) Title Slide
         title_slide = prs.slides.add_slide(prs.slide_layouts[TITLE_SLIDE_LAYOUT])
         title = title_slide.shapes.title
-        subtitle = title_slide.placeholders[1]
+        subtitle = title_slide.placeholders[1]  # May need try/except if no subtitle placeholder
         title.text = slides[0].get('title', 'Presentation Title')
         subtitle.text = f"Author: {author_name}"
-        
-        # Content Slides
+
+        # We'll track a "current_y_in" for each new content slide
+        # so we can stack images/tables below the bullet text
         main_slides = slides[1:-2] if len(slides) > 3 else slides[1:2]
-        
+
         for slide_data in main_slides:
             slide = prs.slides.add_slide(prs.slide_layouts[CONTENT_SLIDE_LAYOUT])
-            
-            # Add title
-            title = slide.shapes.title
-            title.text = slide_data.get('title', 'Untitled Slide')
-            
-            # Process content
+
+            # Slide Title
+            title_shape = slide.shapes.title
+            title_shape.text = slide_data.get('title', 'Untitled Slide')
+
+            # Slide body text
             content_placeholder = slide.placeholders[1]
-            content = content_placeholder.text_frame
-            content.clear()
-            
-            # First pass: Process text content
+            text_frame = content_placeholder.text_frame
+            text_frame.clear()
+
             text_content = []
             elements_to_add = []
-            
-            content_lines = slide_data.get('content', '').split('\n')
-            for line in content_lines:
+
+            # Parse lines
+            lines = slide_data.get('content', '').split('\n')
+            for line in lines:
                 line = line.strip()
                 if not line:
                     continue
-                
-                # Check for figure/table references
-                has_ref = False
+
+                # check for references
+                found_ref = None
                 for ref, elem in element_lookup.items():
                     if ref in line:
-                        has_ref = True
                         elements_to_add.append(elem)
+                        # remove the reference text to avoid printing "[FIGURE X]" in bullet
                         line = line.replace(ref, '').strip()
-                        print(f"Found reference {ref} in line, will add {elem['type']} {elem['figure_number']}")
-                
-                if line and not has_ref:
+                        found_ref = ref
+                if line:
                     text_content.append(line)
-            
-            # Add text content
+
+            # Add bullet points
             for line in text_content:
-                p = content.add_paragraph()
+                p = text_frame.add_paragraph()
+                # simple bullet detection
                 if line.startswith('-') or line.startswith('*'):
                     p.bullet = True
-                    p.text = line.lstrip('*- ').strip()
+                    p.text = line.lstrip('-* ').strip()
                 else:
                     p.text = line
                 p.font.size = Pt(18)
-            
-            # Calculate starting Y position for elements
-            # Use the placeholder's position instead of text frame properties
-            current_y = content_placeholder.top + content_placeholder.height + Inches(0.5)
-            
+
+            # We'll place images/tables below the text placeholder
+            current_y_in = (
+                (content_placeholder.top + content_placeholder.height) / 914_400.0 
+                + 0.3  # small gap
+            )
+
+            # Insert each figure/table
             for elem in elements_to_add:
                 try:
                     file_path = os.path.abspath(elem['static_path'])
                     if not os.path.exists(file_path):
-                        print(f"File not found: {file_path}")
+                        print(f"File not found for {elem['type']} {elem['figure_number']}: {file_path}")
                         continue
-                        
-                    print(f"Adding {elem['type']} {elem['figure_number']} from {file_path}")
-                    
+
                     if elem['type'].lower() == 'figure':
-                        # Add image
-                        img_width = Inches(6)
-                        img_left = Inches(1.5)
-                        
-                        picture = slide.shapes.add_picture(
+                        # Add image within bounds
+                        print(f"Adding FIGURE {elem['figure_number']} from {file_path}")
+                        slide, current_y_in = add_image_within_bounds(
+                            prs,
+                            slide,
                             file_path,
-                            img_left,
-                            current_y,
-                            width=img_width
+                            current_y_in,
+                            left_in=1.0,
+                            desired_width_in=6.0,
+                            margin_bottom_in=0.3
                         )
-                        
-                        # Add caption
-                        caption_top = current_y + picture.height + Inches(0.1)
-                        caption_box = slide.shapes.add_textbox(
-                            img_left,
-                            caption_top,
-                            img_width,
-                            Inches(0.5)
+                        # Then add a small caption text box
+                        caption_textbox = slide.shapes.add_textbox(
+                            Inches(1.0),
+                            Inches(current_y_in),
+                            Inches(6.0),
+                            Inches(0.4)
                         )
-                        caption_para = caption_box.text_frame.add_paragraph()
+                        caption_para = caption_textbox.text_frame.add_paragraph()
                         caption_para.text = f"Figure {elem['figure_number']}: {elem['caption']}"
                         caption_para.font.size = Pt(12)
                         caption_para.font.italic = True
-                        
-                        current_y = caption_top + Inches(0.7)
-                        
-                    else:  # Table
-                        current_y = await add_formatted_table_element(slide, elem, current_y/Inches(1), text_llm)
-                        
+                        current_y_in += 0.5
+
+                    else:
+                        # table
+                        print(f"Adding TABLE {elem['figure_number']}")
+                        # We'll pass 'slide' and see if we can place it
+                        # The function returns new Y position
+                        new_y = await add_formatted_table_element(slide, elem, current_y_in, text_llm)
+                        current_y_in = new_y
+
                 except Exception as e:
                     print(f"Error adding {elem['type']} {elem['figure_number']}: {str(e)}")
                     traceback.print_exc()
                     continue
 
-        # Add References slide
+        # 2) References slide
         ref_slide = prs.slides.add_slide(prs.slide_layouts[REFERENCES_SLIDE_LAYOUT])
-        ref_title = ref_slide.shapes.title
-        ref_title.text = slides[-2].get('title', 'References')
-        
-        ref_content = ref_slide.placeholders[1]
-        ref_frame = ref_content.text_frame
+        ref_slide.shapes.title.text = slides[-2].get('title', 'References')
+
+        ref_text = slides[-2].get('content', '')
+        ref_placeholder = ref_slide.placeholders[1]
+        ref_frame = ref_placeholder.text_frame
         ref_frame.clear()
-        
-        references_text = slides[-2].get('content', '')
-        for line in references_text.split('\n'):
-            if line.strip():
+
+        for line in ref_text.split('\n'):
+            line = line.strip()
+            if line:
                 p = ref_frame.add_paragraph()
-                p.text = line.strip()
+                p.text = line
                 p.bullet = True
                 p.font.size = Pt(16)
-        
-        # Add Thank You slide
+
+        # 3) Thank You slide
         thanks_slide = prs.slides.add_slide(prs.slide_layouts[THANK_YOU_SLIDE_LAYOUT])
-        thanks_title = thanks_slide.shapes.title
-        thanks_title.text = slides[-1].get('title', 'Thank You')
-        
+        thanks_slide.shapes.title.text = slides[-1].get('title', 'Thank You')
+
         if len(thanks_slide.placeholders) > 1:
-            thanks_subtitle = thanks_slide.placeholders[1]
-            thanks_subtitle.text = slides[-1].get('content', 'Thank you for your attention!')
-        
+            thanks_sub = thanks_slide.placeholders[1]
+            thanks_sub.text = slides[-1].get('content', 'Thank you for your attention!')
+
+        # Save final output
         output_filename = "generated_presentation.pptx"
         prs.save(output_filename)
         print("Presentation saved successfully")
         return output_filename
-        
+
     except Exception as e:
         print(f"Error generating presentation: {str(e)}")
         traceback.print_exc()
         return ""
+
     
 def extract_and_caption_pdf_elements(
     pdf_file_path: str,
@@ -887,93 +908,93 @@ async def add_formatted_table_element(slide, elem, current_y, text_llm):
     `current_y` is assumed to be in *inches*, so we do `Inches(current_y)` where needed.
     """
     try:
-        table_width_in = 8.0  # total table width in inches
-        table_left_in = 0.75  # left margin in inches
+        table_width_in = 8.0
+        left_in = 0.75
 
-        # 1) Read raw table text
+        # 1) read raw table text
         with open(elem['static_path'], 'r', encoding='utf-8') as f:
             raw_content = f.read()
 
-        # 2) Convert raw text to structured table data
+        # 2) LLM to parse the table
         table_data = await process_table_text(raw_content, text_llm)
         if not table_data.headers and not table_data.rows:
-            # If no table structure found, just return some extra spacing
-            return current_y + 3
+            # No structured table found
+            return current_y_in + 1.0
 
-        # Number of rows = 1 (for headers) + data row count
+        # Estimate row heights
         num_rows = len(table_data.rows) + 1
-        num_cols = len(table_data.headers)
-
-        # 3) Calculate table dimensions in EMUs
         row_height_in = 0.3
-        table_height_in = row_height_in * num_rows
+        table_height_in = num_rows * row_height_in
 
-        table_left_emu = Inches(table_left_in)
-        table_top_emu = Inches(current_y)
-        table_width_emu = Inches(table_width_in)
-        table_height_emu = Inches(table_height_in)
+        # Possibly move to new slide if not enough space
+        slide = elem.get("slide_object", slide)  # or pass the slide reference from elsewhere
+        from pptx.util import Inches
+        from pptx.enum.text import PP_ALIGN
 
-        # 4) Create the table shape
+        # Check vertical space
+        # We'll do a simple function as an example:
+        slide_width_in = slide.part.slide_width / 914_400.0
+        slide_height_in = slide.part.slide_height / 914_400.0
+
+        # if it doesn't fit, go to next slide
+        slide, current_y_in = ensure_space_on_slide(slide.part, slide, current_y_in, table_height_in)
+
+        # 3) Create the table shape
         table_shape = slide.shapes.add_table(
             rows=num_rows,
-            cols=num_cols,
-            left=table_left_emu,
-            top=table_top_emu,
-            width=table_width_emu,
-            height=table_height_emu
+            cols=len(table_data.headers),
+            left=Inches(left_in),
+            top=Inches(current_y_in),
+            width=Inches(table_width_in),
+            height=Inches(table_height_in)
         )
         tbl = table_shape.table
 
-        # 5) Fill in the header row
+        # 4) Fill headers
         for col_idx, header_text in enumerate(table_data.headers):
             cell = tbl.cell(0, col_idx)
             cell.text = header_text
             paragraph = cell.text_frame.paragraphs[0]
             paragraph.font.bold = True
             paragraph.font.size = Pt(11)
-            paragraph.font.name = "Calibri"
             paragraph.alignment = PP_ALIGN.CENTER
-
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(230, 230, 230)  # light gray
+            cell.fill.fore_color.rgb = RGBColor(230, 230, 230)
 
-        # 6) Fill in data rows
+        # 5) Fill rows
         for row_idx, row_obj in enumerate(table_data.rows, start=1):
             for col_idx, cell_text in enumerate(row_obj.cells):
-                if col_idx < num_cols:
+                if col_idx < len(table_data.headers):
                     cell = tbl.cell(row_idx, col_idx)
                     cell.text = cell_text
-
                     paragraph = cell.text_frame.paragraphs[0]
                     paragraph.font.size = Pt(10)
-                    paragraph.font.name = "Calibri"
 
-                    # Right-align numeric values
+                    # Align numeric
                     if cell_text.replace('.', '', 1).replace('-', '', 1).isdigit():
                         paragraph.alignment = PP_ALIGN.RIGHT
                     else:
                         paragraph.alignment = PP_ALIGN.LEFT
 
-                    # Alternate row colors for readability
+                    # Alternate row color
                     if row_idx % 2 == 0:
                         cell.fill.solid()
-                        cell.fill.fore_color.rgb = RGBColor(245, 245, 245)  # very light gray
+                        cell.fill.fore_color.rgb = RGBColor(245, 245, 245)
 
-        # 7) Adjust column widths (balancing first column slightly larger)
-        col_ratios = [1.5 if i == 0 else 1 for i in range(num_cols)]
+        # 6) Adjust column widths
+        col_ratios = [1.5 if i == 0 else 1 for i in range(len(table_data.headers))]
         ratio_sum = sum(col_ratios)
 
         for i, col in enumerate(tbl.columns):
-            # Multiply the total table width by ratio; cast to int if needed
-            col_width_emu = int(table_width_emu * (col_ratios[i] / ratio_sum))
+            col_width_emu = int(Inches(table_width_in) * (col_ratios[i] / ratio_sum))
             col.width = col_width_emu
 
-        # 8) Add a caption below the table
-        new_y = current_y + table_height_in + 0.2
+        # 7) Add table caption below it
+        caption_top_in = current_y_in + table_height_in + 0.2
         caption_box = slide.shapes.add_textbox(
-            table_left_emu,
-            Inches(new_y),
-            table_width_emu,
+            Inches(left_in),
+            Inches(caption_top_in),
+            Inches(table_width_in),
             Inches(0.4)
         )
         caption_para = caption_box.text_frame.add_paragraph()
@@ -982,13 +1003,92 @@ async def add_formatted_table_element(slide, elem, current_y, text_llm):
         caption_para.font.italic = True
         caption_para.alignment = PP_ALIGN.CENTER
 
-        # Return an updated y-position in *inches*
-        return new_y + 0.5
+        return caption_top_in + 0.5
 
     except Exception as e:
         print(f"Error adding formatted table: {str(e)}")
         traceback.print_exc()
         return current_y + 3
+
+# =================================
+# Slide Placement Helpers
+# =================================
+def ensure_space_on_slide(prs, slide, current_y_in, shape_height_in):
+    """
+    If there's not enough vertical space left on the current slide, create a new slide.
+    Return (slide, new_current_y_in).
+    """
+    slide_height_in = prs.slide_height / 914_400.0
+    bottom_margin_in = 0.5  # for example
+
+    # If shape won't fit:
+    if (current_y_in + shape_height_in + bottom_margin_in) > slide_height_in:
+        # Create new slide (using a standard content layout = 1 or whichever you prefer)
+        new_slide = prs.slides.add_slide(prs.slide_layouts[1])
+        # Reset to a top margin
+        return (new_slide, 1.0)
+    else:
+        return (slide, current_y_in)
+
+def add_image_within_bounds(prs, slide, file_path, current_y_in, left_in=1.0, desired_width_in=6.0, margin_bottom_in=0.2):
+    """
+    Add an image onto 'slide' at 'current_y_in' (in inches). 
+    Auto-scale if it doesn't fit horizontally or vertically.
+    Return new (slide, new_current_y_in).
+    """
+    from PIL import Image
+
+    slide_width_in = prs.slide_width / 914_400.0
+    slide_height_in = prs.slide_height / 914_400.0
+
+    # Read actual image size in pixels
+    img = Image.open(file_path)
+    w_px, h_px = img.size
+    aspect = w_px / float(h_px) if h_px != 0 else 1.0
+
+    # Space left horizontally:
+    right_margin_in = 1.0
+    available_width_in = slide_width_in - (left_in + right_margin_in)
+
+    # If desired_width_in is bigger than what's available, clamp it
+    if desired_width_in > available_width_in:
+        desired_width_in = available_width_in
+
+    # Compute height from aspect ratio
+    desired_height_in = desired_width_in / aspect
+
+    # Space left vertically:
+    bottom_margin_in = 0.5
+    available_height_in = slide_height_in - (current_y_in + bottom_margin_in)
+
+    # If the image is too tall, shrink it
+    if desired_height_in > available_height_in:
+        desired_height_in = available_height_in
+        desired_width_in = desired_height_in * aspect
+
+    # If there's still no space, push to new slide
+    if desired_height_in < 0.5:
+        # means there's basically no space, so let's create a new slide
+        slide, current_y_in = ensure_space_on_slide(prs, slide, current_y_in, desired_height_in)
+        # reset desired width
+        desired_width_in = min(6.0, slide_width_in - 2.0)
+        desired_height_in = desired_width_in / aspect
+
+    # One final re-check for new slide space
+    slide, current_y_in = ensure_space_on_slide(prs, slide, current_y_in, desired_height_in)
+
+    # Add image
+    left_emu = Inches(left_in)
+    top_emu = Inches(current_y_in)
+    width_emu = Inches(desired_width_in)
+    height_emu = Inches(desired_height_in)
+
+    pic = slide.shapes.add_picture(file_path, left_emu, top_emu, width=width_emu, height=height_emu)
+
+    # Update 'current_y_in'
+    current_y_in += desired_height_in + margin_bottom_in
+
+    return slide, current_y_in
 
 
 def get_llm(model_provider: str, model_name: str, api_key: str, temperature=0.7):
