@@ -3,7 +3,7 @@
 **Bridge the Gap Between Ecological Research and Impactful Communication**  
 _EcoHack-2025 - AI & LLM Hackathon for Applications in Evidence-based Ecological Research & Practice_
 
-![Demo Preview](https://via.placeholder.com/800x400.png?text=AutoDeckAI+Interface+Showcase)
+[![Demo Preview]](https://vimeo.com/1050934412/187d07401a?share=copy)
 
 ## 🚨 Problem Statement
 
@@ -115,8 +115,8 @@ graph TD
 **Project Links**:
 
 - [Code Repository](https://github.com/knowhrishi/AutoDeckAI-EchoHack)
-- [Demo Video](https://www.loom.com/share/2f045c457fd747179d36d298480cf1e8)
-- [EcoHack-2025 Submission](https://ecohack.org/2025/entries/autodeck-ai)
+- [Demo Video](https://vimeo.com/1050934412/187d07401a?share=copy)
+- **Hosted Application**: [AutoDeckAI Cloud](https://autodeckai-ecohack2025.streamlit.app/)
 
 ## 📜 License
 
