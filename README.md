@@ -127,5 +127,5 @@ MIT Licensed - [View Full Terms](LICENSE)
 **Empowering 1000+ Ecologists Worldwide**  
 [Report Issues](https://github.com/knowhrishi/AutoDeckAI-EchoHack/issues) •
 [Request Features](https://github.com/knowhrishi/AutoDeckAI-EchoHack/discussions) •
-[Cite Our Work]([https://zenodo.org/records/1234567](https://zenodo.org/badge/922702024.svg
-))
+[Cite Our Work](https://doi.org/10.5281/zenodo.14750009)  
+[![DOI](https://zenodo.org/badge/922702024.svg)](https://doi.org/10.5281/zenodo.14750009)
