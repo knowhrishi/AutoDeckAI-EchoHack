@@ -1,5 +1,5 @@
 # app.py
-import os
+import os, shutil
 import time
 import random, tempfile
 import asyncio
@@ -28,12 +28,11 @@ st.title("AutoDeckAI: 🌿 Eco-centric Slide Generator")
 st.markdown(
     """This tool helps **ecologists** convert research papers and other docs into **practice-oriented presentations**."""
 )
-# Add warning banner here
 st.warning("""
 ⚠️ **Note:** Hugging Face model integration is currently under development. 
 For production use, please select OpenAI as your model provider.
 """)
-# Custom CSS for ecological theme
+
 st.markdown("""
     <style>
     .progress-bar-wrapper { margin: 10px 0; }
@@ -50,7 +49,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 # Show random eco tip
-st.sidebar.markdown(f'<div class="eco-tip">{random.choice(ECO_TIPS)}</div>', unsafe_allow_html=True)
+# st.sidebar.markdown(f'<div class="eco-tip">{random.choice(ECO_TIPS)}</div>', unsafe_allow_html=True)
 
 # =========================================
 # Sidebar: API Key & Configuration
@@ -164,24 +163,48 @@ uploaded_files = st.file_uploader(
 # =========================================
 @st.cache_data
 def process_all_content(abstract: str, files) -> str:
-    """Process content with temporary files and ecological validation"""
+    """Process content with temporary files and ecological validation."""
     corpus_parts = []
-    
+
+    # Validate and add abstract if provided
     if abstract.strip():
         validated_abstract = validate_ecological_terms(abstract)
         corpus_parts.append(validated_abstract)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        for file in uploaded_files:
+    # Temporary directory to store uploaded files
+    temp_dir = tempfile.mkdtemp()  # Use mkdtemp() to keep the temp directory alive after the function exits
+    print(f"Temporary directory created: {temp_dir}")
+
+    for file in files:
+        try:
+            # Save the uploaded file to the temporary directory
             file_path = os.path.join(temp_dir, file.name)
+            # print(f"Saving file to: {file_path}")
             with open(file_path, "wb") as f:
                 f.write(file.getbuffer())
+
+            # Ensure the file exists before processing
+            if not os.path.exists(file_path):
+                print(f"Error: File not found after saving: {file_path}")
+                continue
+
+            # Process the saved file
+            # print(f"Processing file: {file_path}")
             text = extract_content_from_file(file_path)
+
             if text and text.strip():
                 validated_text = validate_ecological_terms(text)
                 corpus_parts.append(validated_text)
+            else:
+                print(f"Warning: No content extracted from file {file.name}")
 
+        except Exception as e:
+            print(f"Error processing file {file.name}: {str(e)}")
+            continue
+
+    # Combine all processed content into a single string
     return "\n\n".join(corpus_parts).strip()
+
 
 
 
@@ -249,23 +272,43 @@ if st.button("🚀 Generate Slide Deck"):
 
         clean_static_directory()  # Wipe old static content
         all_extracted_elements = []
-
+        temp_dir = tempfile.mkdtemp()  # Create a persistent temp directory
+        # print(f"Temporary directory created: {temp_dir}")
+        
+        
         # For each PDF, do figure/table extraction
         for file in uploaded_files:
             if file.name.lower().endswith(".pdf"):
-                pdf_path = file.name
-                # This function returns a list of extracted elements
-                extracted_elements = extract_and_caption_pdf_elements(
-                    pdf_path,
-                    model_provider=model_provider,
-                    model_name=caption_model_name if model_provider != "OpenAI" else "gpt-4o-mini",
-                    api_key=openai_api_key if model_provider == "OpenAI" else hf_api_key
-                )
-                all_extracted_elements.extend(extracted_elements)
-        
+                try:
+                    # Save file to temp directory
+                    pdf_path = os.path.join(temp_dir, file.name)
+                    # print(f"Saving PDF to: {pdf_path}")
+                    with open(pdf_path, "wb") as f:
+                        f.write(file.getbuffer())
+
+                    # Ensure the file exists before processing
+                    if not os.path.exists(pdf_path):
+                        print(f"Error: File not found after saving: {pdf_path}")
+                        continue
+
+                    # Extract elements from the PDF
+                    # print(f"Processing PDF: {pdf_path}")
+                    extracted_elements = extract_and_caption_pdf_elements(
+                        pdf_path,
+                        model_provider=model_provider,
+                        model_name=caption_model_name if model_provider != "OpenAI" else "gpt-4o-mini",
+                        api_key=openai_api_key if model_provider == "OpenAI" else hf_api_key
+                    )
+                    all_extracted_elements.extend(extracted_elements)
+
+                except Exception as e:
+                    print(f"Error processing PDF file {file.name}: {str(e)}")
+                    continue
+
         print(f"Extracted {len(all_extracted_elements)} elements:")
         for elem in all_extracted_elements:
             print(f"- {elem['type']} {elem['figure_number']} at {elem['static_path']}")
+
 
         # 4. Generate slides via retrieval from the entire text corpus
         # st.info("🖋️ Generating slides...")
@@ -322,7 +365,6 @@ if st.button("🚀 Generate Slide Deck"):
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
 
-        # Optional: Show a preview of slides
         with st.expander("📄 Slide Preview"):
             for i, slide in enumerate(slides, 1):
                 st.markdown(f"**Slide {i}: {slide['title']}**")
@@ -331,3 +373,6 @@ if st.button("🚀 Generate Slide Deck"):
     except Exception as e:
         st.error(f"❌ Error generating slides: {str(e)}")
         st.stop()
+    finally:
+        shutil.rmtree(temp_dir)
+        print(f"Temporary directory {temp_dir} deleted.")
