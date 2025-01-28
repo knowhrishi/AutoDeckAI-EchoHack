@@ -171,46 +171,55 @@ uploaded_files = st.file_uploader(
 def process_all_content(abstract: str, files) -> str:
     """Process content with temporary files and ecological validation."""
     corpus_parts = []
+    temp_dir = None
 
+    try:
     # Validate and add abstract if provided
-    if abstract.strip():
-        validated_abstract = validate_ecological_terms(abstract)
-        corpus_parts.append(validated_abstract)
+        if abstract.strip():
+            validated_abstract = validate_ecological_terms(abstract)
+            corpus_parts.append(validated_abstract)
 
-    # Temporary directory to store uploaded files
-    temp_dir = tempfile.mkdtemp()  # Use mkdtemp() to keep the temp directory alive after the function exits
-    print(f"Temporary directory created: {temp_dir}")
+        # Temporary directory to store uploaded files
+        temp_dir = tempfile.mkdtemp()  # Use mkdtemp() to keep the temp directory alive after the function exits
+        print(f"Temporary directory created: {temp_dir}")
 
-    for file in files:
-        try:
-            # Save the uploaded file to the temporary directory
-            file_path = os.path.join(temp_dir, file.name)
-            # print(f"Saving file to: {file_path}")
-            with open(file_path, "wb") as f:
-                f.write(file.getbuffer())
+        for file in files:
+            try:
+                # Save the uploaded file to the temporary directory
+                file_path = os.path.join(temp_dir, file.name)
+                # print(f"Saving file to: {file_path}")
+                with open(file_path, "wb") as f:
+                    f.write(file.getbuffer())
 
-            # Ensure the file exists before processing
-            if not os.path.exists(file_path):
-                print(f"Error: File not found after saving: {file_path}")
+                # Ensure the file exists before processing
+                if not os.path.exists(file_path):
+                    print(f"Error: File not found after saving: {file_path}")
+                    continue
+
+                # Process the saved file
+                # print(f"Processing file: {file_path}")
+                text = extract_content_from_file(file_path)
+
+                if text and text.strip():
+                    validated_text = validate_ecological_terms(text)
+                    corpus_parts.append(validated_text)
+                else:
+                    print(f"Warning: No content extracted from file {file.name}")
+
+            except Exception as e:
+                print(f"Error processing file {file.name}: {str(e)}")
                 continue
 
-            # Process the saved file
-            # print(f"Processing file: {file_path}")
-            text = extract_content_from_file(file_path)
-
-            if text and text.strip():
-                validated_text = validate_ecological_terms(text)
-                corpus_parts.append(validated_text)
-            else:
-                print(f"Warning: No content extracted from file {file.name}")
-
-        except Exception as e:
-            print(f"Error processing file {file.name}: {str(e)}")
-            continue
-
-    # Combine all processed content into a single string
-    return "\n\n".join(corpus_parts).strip()
-
+        # Combine all processed content into a single string
+        return "\n\n".join(corpus_parts).strip()
+    finally:
+        # Clean up temporary directory
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                print(f"Temporary directory {temp_dir} deleted.")
+            except Exception as e:
+                print(f"Error cleaning up temporary directory: {str(e)}")
 
 
 
