@@ -108,9 +108,9 @@ graph TD
 
 **Core Developers**:
 
-- Hrishikesh Jadhav (University of Passau) - Workflow Architecture
-- Javad Razavian (University of Qom) - AI/ML Integration
-- Moiz Khan Sherwani (University of Copenhagen) - Ecological Validation
+- Hrishikesh Jadhav (University of Passau)
+- Javad Razavian (University of Qom)
+- Moiz Khan Sherwani (University of Copenhagen)
 
 **Project Links**:
 
